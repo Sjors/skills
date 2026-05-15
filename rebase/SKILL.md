@@ -42,6 +42,7 @@ Record `PRE_REBASE_HEAD` and `NUM_COMMITS` from the output for use later.
 Before rebasing:
 - Find/read the corresponding PR for branch intent.
 - Confirm target base branch (default: `origin/master`).
+- Skim recent upstream merges in the touched area and note any candidate PR numbers you may interact with during the rebase.
 
 ### 2. Fetch and start rebase
 
@@ -66,6 +67,11 @@ git diff --name-only --diff-filter=U
 ```bash
 git log --oneline --merges origin/master -- <conflicted_file> | head -5
 ```
+Also check for direct non-merge commits in the touched area when the interaction is not a textual conflict but a post-rebase build/test failure:
+```bash
+git log --oneline origin/master -- <touched_file> | head -20
+```
+If needed, map specific commits back to PRs with GitHub tools or `gh api repos/<owner>/<repo>/commits/<sha>/pulls`.
 4. Resolve minimally and intentionally:
 - Keep unrelated upstream changes.
 - Apply only branch-intended behavior.
@@ -100,12 +106,6 @@ Then, using the base hash observed above:
 git range-diff <base>...<PRE_REBASE_HEAD> HEAD~<NUM_COMMITS>...HEAD
 ```
 
-Also provide this copy-paste command for manual inspection with values filled in:
-
-```bash
-PREV=<original-short-hash> N=<num-commits> && git range-diff `git merge-base --all HEAD $PREV`...$PREV HEAD~$N...HEAD
-```
-
 Minimum validation:
 - Build succeeds.
 - Targeted tests for touched areas pass.
@@ -116,7 +116,7 @@ Minimum validation:
 Include:
 - Number of rebased commits.
 - Conflict files and causing PRs.
+- Any additional upstream PRs interacted with during validation or follow-up fixes, even if they did not produce a textual conflict.
 - Conflict-resolution approach.
 - Build/test results.
 - Notable `range-diff` outcomes.
-- The filled-in manual inspection command (`PREV=... N=...`).
