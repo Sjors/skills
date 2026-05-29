@@ -14,7 +14,8 @@ description: Retrieve GitHub CI status with MCP and Actions job logs with gh API
     - If a `gh api` command fails with an authentication error, report the error and ask the user to refresh the token.
     - Keep narration minimal: run the MCP calls/commands, then summarize results.
 
-- **Terminal safety:** when running any terminal commands as part of this workflow, follow the separate terminal skill: `~/.copilot/skills/terminal/SKILL.md`.
+- **Shell usage:** keep local commands short, and store large logs in a repo-local ignored temp directory such as `./tmp/`.
+    - Remove downloaded log files after summarizing unless the user asked to keep them.
 
 - **Common workflow (PR or Actions URL → CI status/logs):**
     - Use MCP first whenever the PR number is known.
@@ -83,6 +84,14 @@ gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs
 rg -n -i -C 5 "error|fail|assert|fatal|traceback|cmake error" /abs/path/to/repo/tmp/<job-log>.log
 ```
 
+    - For Bitcoin Core "test ancestor commits" jobs, also extract the failing
+      commit hash and the exact per-commit command shape from the log before
+      reproducing locally or remotely. These jobs commonly rebase with
+      `--exec`, merge the target branch into each ancestor with
+      `git merge --no-commit`, run the per-commit test script, then reset. Match
+      that shape when reproducing the failure.
+
     - **Important:** Do NOT guess what went wrong without fetching actual logs first. Always retrieve the real error message before proposing fixes.
+    - For successful jobs, still inspect relevant indicators the user asked about, such as cache hit/miss lines, tool versions, warnings, and final summary sections.
 
 - **Related helper:** if the task also involves PR review-thread triage (outside CI logs), use `~/utils/extract_threads.py` with `get_review_comments` JSON output.
