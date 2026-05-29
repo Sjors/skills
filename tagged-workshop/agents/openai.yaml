@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tagged Workshop"
+  short_description: "Maintain Git-tagged tutorial branches."
+  default_prompt: "Use this skill to create or update a Git-tagged workshop with step branches/tags, forward navigation links, retagging, and CI."
