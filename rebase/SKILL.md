@@ -29,7 +29,52 @@ Run these separately so no `$()` substitution is needed:
 ```bash
 git branch --show-current
 git rev-parse HEAD
-git merge-base master HEAD
+git rev-parse --abbrev-ref --symbolic-full-name @{u}
+git status --short --branch
+```
+
+If the branch has an upstream/tracking branch, fetch it before computing the
+rebase range. Also fetch the target base branch:
+```bash
+git fetch <upstream-remote> <upstream-branch>
+git fetch origin master
+git status --short --branch
+git rev-list --left-right --count HEAD...@{u}
+```
+
+Guard against rebasing a stale local branch:
+- If the branch is behind its upstream/tracking branch, do not start the rebase
+  from the stale local HEAD.
+- If the local branch has no unique commits, fast-forward to the upstream first:
+  ```bash
+  git merge --ff-only @{u}
+  ```
+- If the local branch is both ahead and behind its upstream, inspect the
+  divergence before rebasing:
+  ```bash
+  git log --oneline --left-right --cherry-pick HEAD...@{u}
+  ```
+  Treat the upstream branch (for example the PR author's branch) as the source
+  of truth unless the user explicitly wants to preserve local-only commits. Do
+  not blindly rebase the stale local side of a diverged branch.
+- For a PR author's branch where the tracking branch is the source of truth but
+  the local branch is stale or diverged, preserve the local tip and rebase the
+  fetched tracking branch instead:
+  ```bash
+  git branch codex/backup-<pr>-before-rebase
+  git switch --detach @{u}
+  ```
+  After the detached rebase succeeds and is verified, move the local branch name
+  to the rebased tip and switch back:
+  ```bash
+  git branch -f <local-branch> HEAD
+  git switch <local-branch>
+  ```
+
+After the branch is synchronized, compute the range to be rebased:
+```bash
+git rev-parse HEAD
+git merge-base origin/master HEAD
 ```
 Then, using the merge-base hash observed above:
 ```bash
@@ -110,6 +155,10 @@ Minimum validation:
 - Build succeeds.
 - Targeted tests for touched areas pass.
 - If fuzz code changed, build fuzz target(s) as well.
+- If the local branch still tracks the original unrebased PR branch after moving
+  to the rebased tip, `git status` may report a large ahead/behind divergence.
+  That is expected until the rebased branch is pushed or the upstream tracking
+  branch is changed; do not interpret it as an unclean worktree by itself.
 
 ### 5. Final summary checklist
 
