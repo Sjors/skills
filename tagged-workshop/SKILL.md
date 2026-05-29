@@ -11,7 +11,7 @@ Use this skill for repositories where a tutorial is encoded as Git history:
 
 - A public landing branch such as `master` contains the landing page, setup, and CI.
 - A `workshop` branch contains a linear sequence of tutorial commits.
-- Tags such as `step.1`, `step.2`, `step.4.solution` point at specific commits.
+- Tags such as `step.1`, `step.2`, `step.4.solution` point at specific commits. In some workshops `step.1` is the landing/base commit on `master`, with later tags on `workshop`.
 - README navigation is forward-only and links to GitHub tag pages, not local anchors.
 
 Prefer preserving public branch history. Force-push the `workshop` branch and moved tags when steps are rewritten. Do not force-push `master` after publication unless the user explicitly asks; for Step 1/landing-page changes, make a new commit on `master`, then rebase/rebuild `workshop` on top of the updated base and retag.
@@ -72,11 +72,22 @@ Use `/Users/dev/utils/tagged_workshop_retag.py` when the branch is linear and ea
   --tags step.1,step.2,step.3,step.4,step.4.solution,step.5,step.5.solution
 ```
 
+If the first step is the landing/base commit on `master`, tag the base separately:
+
+```sh
+/Users/dev/utils/tagged_workshop_retag.py \
+  --branch workshop \
+  --base master \
+  --base-tag step.1 \
+  --tags step.2,step.3,step.4,step.4.solution,step.5,step.5.solution \
+  --ci-workflow .github/workflows/ci.yml
+```
+
 If commit order and tag order do not match exactly, retag manually with `git tag -f <tag> <commit>`.
 
 6. Validate all tags locally.
 
-Run the same checks CI will run. It is fine to mark early steps as exceptions when they intentionally have no Rust/project files yet.
+Run the same checks CI will run. It is fine to mark early steps as exceptions when they intentionally have no Rust/project files yet. If CI hardcodes tag names as separate steps, the local validation order and CI step list must be updated whenever tags are added, removed, or renamed.
 
 ```sh
 current_branch=$(git branch --show-current)
@@ -121,6 +132,15 @@ Add CI on the landing branch that fetches all tags and checks every `step.*` tag
 - `cargo check --locked`
 
 Skip intentional non-code steps explicitly by tag name rather than letting them fail.
+
+For the current Bitcoin Core IPC workshop layout:
+
+- `master` contains CI, setup text, deterministic fixtures under `test/fixtures`, and may be tagged as `step.1`.
+- `workshop` is rebased onto `master` for landing/setup changes, then later step tags are moved.
+- CI uses one runner with separate `Check step.*` steps, not a matrix. Keep those steps in the same order as the tag list.
+- CI starts Bitcoin Core v31 from the release binary, loads fixture blocks, and runs later steps with `--ci` so it does not mine real blocks.
+- Rust compiler artifacts are cached with `sccache`; disable the setup-rust-toolchain cache when the landing branch has no `Cargo.toml`.
+- When tags change, update CI in the same change and verify the workflow mentions every moved/new `step.*` tag.
 
 ## Failure Rules
 
