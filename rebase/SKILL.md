@@ -1,176 +1,221 @@
 ---
 name: rebase
-description: Rebase the current branch onto upstream and resolve conflicts safely.
+description: Rebase a Git branch onto its intended base and resolve conflicts safely. Use for ordinary or stacked rebases; use the interactive-rebase skill when the request is to split, squash, reorder, or reword commits.
 ---
 
-# Skill Instructions
+# Rebase
 
-## Goal
-Move a branch onto latest upstream history with minimal drift and clear verification.
+Move a branch onto its intended upstream history with minimal patch drift and
+clear verification. Follow repository-local instructions for building and
+testing; this skill is used across projects with different build systems.
 
-## Critical Reminders
+## Invariants
 
-1. Set both editors before rebasing to avoid hangs/prompts:
-```bash
-export GIT_SEQUENCE_EDITOR=true
-export GIT_EDITOR=true
-```
-2. Resolve conflicts hunk-by-hunk; do not use whole-file `--ours/--theirs` unless explicitly requested.
-3. Suggest reusable approval prefixes for repeated git operations (for example `["git","add"]`, `["git","rebase"]`).
-4. Avoid `$()` command substitution — run each command separately and use the literal values observed in subsequent commands.
-5. When you need to explore the build or filesystem, use `ls <project-root>/` or `ls <project-root>/build/` so a single permission covers the whole tree. Do not request `ls` on deep specific paths.
-6. For tests, pass the specific test names as arguments to the runner binary and request permission on the runner binary itself (not the full invocation). This way the same permission covers future test runs.
+- Preserve user work. Do not autostash, reset, or replace a branch tip without
+  first understanding and preserving its unique commits.
+- Resolve conflicts hunk-by-hunk. Do not take an entire conflicted file from one
+  side unless the user explicitly requests that result.
+- Run shell queries separately and reuse the literal refs and SHAs they return.
+  Avoid command substitution in later commands.
+- Prefix every rebase invocation with both editor settings because environment
+  state may not persist between tool calls:
+  ```bash
+  GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase <arguments>
+  ```
+- Do not push unless the user asks.
 
-## Procedure
+## 1. Establish the source and target
 
-### 1. Gather context
+Read the repository's `AGENTS.md` and relevant build or CI instructions before
+acting. Do not assume a build command, test runner, remote name, or default
+branch from another repository.
 
-Run these separately so no `$()` substitution is needed:
+Gather the current state:
+
 ```bash
 git branch --show-current
 git rev-parse HEAD
-git rev-parse --abbrev-ref --symbolic-full-name @{u}
 git status --short --branch
+git remote -v
 ```
 
-If the branch has an upstream/tracking branch, fetch it before computing the
-rebase range. Also fetch the target base branch:
+Stop if tracked or untracked work could be overwritten or makes the rebase
+ambiguous. A detached `HEAD` has no `@{u}`; identify the intended PR head or
+destination branch before proceeding, and create a temporary local branch if
+needed to preserve the result.
+
+Determine the target from the user's requested `--onto` arguments or the PR's
+actual base branch. If neither exists, inspect the relevant remote's default
+branch instead of assuming `origin/master`:
+
 ```bash
-git fetch <upstream-remote> <upstream-branch>
-git fetch origin master
-git status --short --branch
-git rev-list --left-right --count HEAD...@{u}
+git symbolic-ref --short refs/remotes/<remote>/HEAD
 ```
 
-Guard against rebasing a stale local branch:
-- If the branch is behind its upstream/tracking branch, do not start the rebase
-  from the stale local HEAD.
-- If the local branch has no unique commits, fast-forward to the upstream first:
-  ```bash
-  git merge --ff-only @{u}
-  ```
-- If the local branch is both ahead and behind its upstream, inspect the
-  divergence before rebasing:
-  ```bash
-  git log --oneline --left-right --cherry-pick HEAD...@{u}
-  ```
-  Treat the upstream branch (for example the PR author's branch) as the source
-  of truth unless the user explicitly wants to preserve local-only commits. Do
-  not blindly rebase the stale local side of a diverged branch.
-- For a PR author's branch where the tracking branch is the source of truth but
-  the local branch is stale or diverged, preserve the local tip and rebase the
-  fetched tracking branch instead:
-  ```bash
-  git branch codex/backup-<pr>-before-rebase
-  git switch --detach @{u}
-  ```
-  After the detached rebase succeeds and is verified, move the local branch name
-  to the rebased tip and switch back:
-  ```bash
-  git branch -f <local-branch> HEAD
-  git switch <local-branch>
-  ```
+Fetch the chosen target and record its immutable SHA:
 
-After the branch is synchronized, compute the range to be rebased:
+```bash
+git fetch <target-remote> <target-branch>
+git rev-parse <target-remote>/<target-branch>
+```
+
+Record that output as `TARGET_SHA`. Read the corresponding PR when one exists
+to understand branch intent and confirm the base.
+
+### Tracking-branch safety
+
+If the current branch has a tracking branch, identify and fetch it, then inspect
+the relationship:
+
+```bash
+git rev-parse --abbrev-ref --symbolic-full-name '@{u}'
+git fetch <tracking-remote> <tracking-branch>
+git rev-list --left-right --count HEAD...'@{u}'
+```
+
+- Behind only and no local commits: fast-forward before rebasing:
+  ```bash
+  git merge --ff-only '@{u}'
+  ```
+- Ahead only: preserve and rebase the local tip.
+- Ahead and behind: inspect patch-equivalent and unique commits before choosing
+  a source:
+  ```bash
+  git log --oneline --left-right --cherry-pick HEAD...'@{u}'
+  ```
+  Do not assume the tracking branch is authoritative. A previously rebased but
+  unpushed local stack naturally appears diverged from its old tracking branch.
+  Preserve that local stack when it contains the latest verified resolutions;
+  use the tracking tip when it contains newer author changes. If both sides
+  contain distinct intentional changes and the correct source is unclear, ask
+  the user.
+
+Before switching away from or moving a branch tip, create a unique backup using
+the literal pre-rebase SHA, for example:
+
+```bash
+git branch codex/backup-<short-pre-rebase-sha> <full-pre-rebase-sha>
+```
+
+If that name already exists, choose another explicit suffix. When rebasing a
+fetched tracking tip instead of the current local tip, switch to it detached,
+perform and verify the rebase, then move the intended local branch to the new
+tip and switch back.
+
+### Record the old range
+
+After choosing the source tip, record these literal values:
+
 ```bash
 git rev-parse HEAD
-git merge-base origin/master HEAD
-```
-Then, using the merge-base hash observed above:
-```bash
-git rev-list --count <merge-base>..HEAD
-git log --oneline -<num_commits_plus_3>
+git merge-base <TARGET_SHA> HEAD
 ```
 
-Record `PRE_REBASE_HEAD` and `NUM_COMMITS` from the output for use later.
-
-Before rebasing:
-- Find/read the corresponding PR for branch intent.
-- Confirm target base branch (default: `origin/master`).
-- Skim recent upstream merges in the touched area and note any candidate PR numbers you may interact with during the rebase.
-
-### 2. Fetch and start rebase
+Call them `PRE_REBASE_HEAD` and `OLD_BASE`. Inspect the stack:
 
 ```bash
-git fetch origin master
-git log --oneline origin/master -5
-git rebase origin/master
+git rev-list --count <OLD_BASE>..<PRE_REBASE_HEAD>
+git log --oneline <OLD_BASE>..<PRE_REBASE_HEAD>
+git rev-list --merges <OLD_BASE>..<PRE_REBASE_HEAD>
+git diff --name-only <OLD_BASE>..<PRE_REBASE_HEAD>
 ```
 
-For stacked rebases, run the user-provided `--onto` command exactly.
+If the stack contains merge commits whose structure matters, use
+`--rebase-merges` or get direction instead of silently flattening them. Inspect
+upstream changes between `OLD_BASE` and `TARGET_SHA` in the touched areas before
+starting.
 
-### 3. Handle conflicts
+## 2. Rebase
 
-Per conflict:
+Use the recorded target SHA so the base cannot move during the operation:
 
-1. Identify files:
+```bash
+GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase <TARGET_SHA>
+```
+
+For a stacked rebase, preserve the user's `--onto` semantics exactly while
+still prefixing the command with both editor settings.
+
+## 3. Resolve each stop intentionally
+
+Identify conflicts and inspect their context with `rg` and Git:
+
 ```bash
 git diff --name-only --diff-filter=U
-```
-2. Inspect conflict hunks using the Grep tool (not bash grep) on the conflicted file.
-3. Find likely upstream merge/PR causing churn:
-```bash
-git log --oneline --merges origin/master -- <conflicted_file> | head -5
-```
-Also check for direct non-merge commits in the touched area when the interaction is not a textual conflict but a post-rebase build/test failure:
-```bash
-git log --oneline origin/master -- <touched_file> | head -20
-```
-Map the likely causing commit or merge commit back to a PR and record the PR
-number plus link. Use GitHub tools or:
-```bash
-gh api repos/<owner>/<repo>/commits/<sha>/pulls
-```
-Do not leave the cause identified only as a commit hash when a PR can be found.
-4. Resolve minimally and intentionally:
-- Keep unrelated upstream changes.
-- Apply only branch-intended behavior.
-5. Build and run targeted tests before continue. Use `nproc` for the core count. On macOS `nproc` may not exist; if so, set the alias first:
-```bash
-alias nproc="sysctl -n hw.physicalcpu"
-cmake --build build -j$(nproc)
+rg -n -C 30 '^(<<<<<<<|=======|>>>>>>>)' <conflicted-file>
+git diff -- <conflicted-file>
 ```
 
-If exploring the build directory is needed, use `ls <project-root>/build/` rather than a deep specific path.
+Look for both merge and direct commits in the upstream range that caused the
+interaction; avoid unrelated historical results and unnecessary pipelines:
 
-6. Run targeted tests by passing test names as arguments to the runner:
 ```bash
-<test-runner-binary> <test-name-1> <test-name-2>
-```
-Request permission on `<test-runner-binary>` so it covers all future test invocations.
-
-7. Continue:
-```bash
-git add <resolved_files>
-git rebase --continue
+git log --oneline --merges -5 <OLD_BASE>..<TARGET_SHA> -- <conflicted-file>
+git log --oneline -20 <OLD_BASE>..<TARGET_SHA> -- <conflicted-file>
 ```
 
-### 4. Post-rebase verification
+Map the causing commit to its PR when applicable, using the available GitHub
+tools or `gh api repos/<owner>/<repo>/commits/<sha>/pulls`.
 
-Using the literal values of `PRE_REBASE_HEAD` and `NUM_COMMITS` recorded in step 1:
+Resolve minimally: retain unrelated target changes and apply only the source
+branch's intended behavior. Then check the result:
+
 ```bash
-git merge-base HEAD <PRE_REBASE_HEAD>
+rg -n '^(<<<<<<<|=======|>>>>>>>)' <resolved-files>
+git diff --check
 ```
-Then, using the base hash observed above:
+
+Rebuild and run proportionate targeted tests before continuing when the
+conflict affects code, build metadata, or tests. Use the repository's own
+documented commands, presets, CI scripts, and any applicable repository-specific
+test skill. Do not copy a build or test invocation from another project.
+
+Stage only resolved files and continue with editor settings applied again:
+
 ```bash
-git range-diff <base>...<PRE_REBASE_HEAD> HEAD~<NUM_COMMITS>...HEAD
+git add <resolved-files>
+GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase --continue
 ```
 
-Minimum validation:
-- Build succeeds.
-- Targeted tests for touched areas pass.
-- If fuzz code changed, build fuzz target(s) as well.
-- If the local branch still tracks the original unrebased PR branch after moving
-  to the rebased tip, `git status` may report a large ahead/behind divergence.
-  That is expected until the rebased branch is pushed or the upstream tracking
-  branch is changed; do not interpret it as an unclean worktree by itself.
+Repeat for later stops. Do not blindly skip an empty or failing commit; inspect
+why it became empty or failed first.
 
-### 5. Final summary checklist
+## 4. Verify the completed rebase
+
+Record `POST_REBASE_HEAD`, then verify ancestry and compare explicit ranges:
+
+```bash
+git rev-parse HEAD
+git merge-base --is-ancestor <TARGET_SHA> <POST_REBASE_HEAD>
+git rev-list --count <TARGET_SHA>..<POST_REBASE_HEAD>
+git range-diff <OLD_BASE>..<PRE_REBASE_HEAD> <TARGET_SHA>..<POST_REBASE_HEAD>
+```
+
+The explicit ranges remain valid if the rebase drops a patch already present
+upstream. Investigate every non-equivalent range-diff change; do not explain it
+away solely because the rebase completed.
+
+Using repository-local guidance, perform the final build and targeted tests at
+the completed tip. Build fuzz targets when the source changes fuzz code. Also
+run:
+
+```bash
+git diff --check <TARGET_SHA>...<POST_REBASE_HEAD>
+git status --short --branch
+```
+
+An ahead/behind tracking annotation can be expected after rewriting history,
+but the worktree itself must be clean. Refresh the target ref after long
+validation; if it advanced beyond `TARGET_SHA`, either rebase again when the
+request requires the latest tip or report the newer base clearly.
+
+## 5. Report
 
 Include:
-- Number of rebased commits.
-- Conflict files and causing PRs, including PR links.
-- Any additional upstream PRs interacted with during validation or follow-up fixes, even if they did not produce a textual conflict, including PR links.
-- Conflict-resolution approach.
-- Build/test results.
-- Notable `range-diff` outcomes.
+
+- The recorded target ref/SHA and number of rebased commits.
+- Conflict files, causing commits or PRs, and the resolution approach.
+- Additional upstream interactions found during build or test diagnosis.
+- Build and targeted test results.
+- Every notable range-diff change, including dropped or newly empty commits.
+- Final worktree state and whether anything was pushed.
