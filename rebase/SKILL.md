@@ -116,7 +116,12 @@ Also check for direct non-merge commits in the touched area when the interaction
 ```bash
 git log --oneline origin/master -- <touched_file> | head -20
 ```
-If needed, map specific commits back to PRs with GitHub tools or `gh api repos/<owner>/<repo>/commits/<sha>/pulls`.
+Map the likely causing commit or merge commit back to a PR and record the PR
+number plus link. Use GitHub tools or:
+```bash
+gh api repos/<owner>/<repo>/commits/<sha>/pulls
+```
+Do not leave the cause identified only as a commit hash when a PR can be found.
 4. Resolve minimally and intentionally:
 - Keep unrelated upstream changes.
 - Apply only branch-intended behavior.
@@ -164,8 +169,8 @@ Minimum validation:
 
 Include:
 - Number of rebased commits.
-- Conflict files and causing PRs.
-- Any additional upstream PRs interacted with during validation or follow-up fixes, even if they did not produce a textual conflict.
+- Conflict files and causing PRs, including PR links.
+- Any additional upstream PRs interacted with during validation or follow-up fixes, even if they did not produce a textual conflict, including PR links.
 - Conflict-resolution approach.
 - Build/test results.
 - Notable `range-diff` outcomes.
