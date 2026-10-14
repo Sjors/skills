@@ -11,28 +11,45 @@ description: >-
 After modifying Bitcoin Core C++ or Python test code, including during and
 after a rebase.
 
+## Sandbox escalation (Claude Code)
+
+Builds and tests need to escape the sandbox: the shared ccache lives outside
+the worktree, and `bitcoind`/`test_bitcoin` bind RPC and IPC sockets. In
+Claude Code, escalate by setting `dangerouslyDisableSandbox: true` on the Bash
+tool call — do **not** work around the sandbox by redirecting `CCACHE_DIR`,
+disabling ccache, or reshaping the test command.
+
+Commands that need escalation:
+- `cmake --build --preset ...` (writes the shared ccache)
+- `build/bin/test_bitcoin --run_test=...` (temp + socket access)
+- `build/test/functional/<test>.py` and `test_runner.py ...` (RPC/IPC binds)
+
+Keep escalated commands small and reusable so each can be approved once as a
+standing allowlist rule, instead of re-prompting every run:
+- **One action per call.** Don't chain `rm -rf`, `env VAR=...` preludes, or
+  `&&` sequences into the escalated command — those make the command string
+  unique and unmatchable. Run setup steps as their own (sandboxed) calls.
+- **No session-specific paths.** Don't hardcode the worktree path (run from the
+  repo root and use relative paths like `build/test/functional/<test>.py`) and
+  don't pass a per-run `--tmpdir`/`--tmpdirprefix` — the value changes every run
+  and defeats matching. Let the test framework pick its own temp dir unless you
+  specifically need a stable path for triage.
+- **`ulimit -n 10240` is generally no longer needed:** the test framework now
+  caps each node's connections (`maxconnections=94` in the default config), so
+  the default fd limit suffices. Only raise it if a run still fails with an fd
+  exhaustion error, and escalate it as its own call (shell state does not
+  persist between Bash calls, so it can't be a separate prelude to the test).
+- **Pass tests as bare trailing args** (`test_runner.py <test>.py`) so one
+  approved rule covers arbitrary test names.
+
 ## Environment setup
 
-1. **macOS only — raise file descriptor limit** when running functional tests
-   with several nodes:
+**File descriptor limit — usually unnecessary.** The test framework caps each
+node's connections (`maxconnections=94` in the default config), so the default
+fd limit suffices. Only if a run still fails with an fd exhaustion error, raise
+it (macOS):
 ```bash
 ulimit -n 10240
-```
-
-2. **Prepare a test temp root.** Prefer the RAM disk for test tmp/cache
-   paths. The helper clears it before use unless the user explicitly asks to
-   preserve it, creates the standard 11 GiB RAM disk when absent and enough RAM
-   is free, and falls back to the private temp directory when memory is tight.
-```bash
-TEST_TMP_ROOT="$(~/utils/bitcoin-test-temp-root.sh)"
-```
-
-Use the RAM disk only for test tmp/cache paths, not for the build tree or
-build artifacts.
-
-If preserving the existing RAM disk contents is intentional, use:
-```bash
-TEST_TMP_ROOT="$(~/utils/bitcoin-test-temp-root.sh --preserve)"
 ```
 
 ## Building
@@ -51,39 +68,22 @@ continues to be used.
 
 ## Running functional tests
 
-Derive paths from the physical checkout path to avoid symlink surprises:
-```bash
-REALPWD=$(pwd -P)
-```
-
-Invoke the built functional-test scripts from the repo root so
-`build/test/config.ini` is found:
+Run the built scripts from the repo root so `build/test/config.ini` is found,
+and let the framework pick its own temp dir (don't pin `--tmpdir` /
+`--tmpdirprefix` — see the escalation notes above on keeping commands
+reusable). A single test directly:
 ```bash
 build/test/functional/<test>.py
 ```
 
-For reliable sandbox/debug runs, prefer the main runner with stable paths
-under `TEST_TMP_ROOT`:
+One or more tests through the runner (bare trailing args; add `-j <jobs>` for
+concurrency):
 ```bash
-rm -rf "$TEST_TMP_ROOT/testrunner"
-env PWD="$REALPWD" TMPDIR="$TEST_TMP_ROOT" "$REALPWD/build/test/functional/test_runner.py" -j 1 --tmpdirprefix="$TEST_TMP_ROOT/testrunner" --cachedir="$TEST_TMP_ROOT/cache-functional" --failfast --combinedlogslen=200 <test>.py
+build/test/functional/test_runner.py <test1>.py <test2>.py
 ```
 
-When invoking a single test directly, use a fixed per-test tmpdir and the same
-cache path. Delete that fixed tmpdir before each run; do not create numbered
-siblings like `func-<test>-run2` unless the user explicitly asks to preserve
-the failed directory for investigation:
-```bash
-rm -rf "$TEST_TMP_ROOT/func-<test>"
-env PWD="$REALPWD" TMPDIR="$TEST_TMP_ROOT" "$REALPWD/build/test/functional/<test>.py" --tmpdir="$TEST_TMP_ROOT/func-<test>" --cachedir="$TEST_TMP_ROOT/cache-functional"
-```
-
-To run multiple tests outside sandbox triage, use appropriate concurrency for
-the machine:
-```bash
-rm -rf "$TEST_TMP_ROOT/testrunner"
-env PWD="$REALPWD" TMPDIR="$TEST_TMP_ROOT" "$REALPWD/build/test/functional/test_runner.py" -j <jobs> --tmpdirprefix="$TEST_TMP_ROOT/testrunner" --cachedir="$TEST_TMP_ROOT/cache-functional" <test1>.py <test2>.py
-```
+When a run misbehaves, the first thing to try is wiping the temp dir or
+clearing the test cache (see Common issues), rather than pinning paths.
 
 When tests need previous releases, remember that Bitcoin worktrees on this
 host normally recreate the ignored local `releases` symlink through the shared
@@ -96,12 +96,12 @@ after `git worktree add`/`git checkout`, or pass
 
 Via ctest:
 ```bash
-env TMPDIR="$TEST_TMP_ROOT/unit" ctest --test-dir build -R <test_name> --output-on-failure
+ctest --test-dir build -R <test_name> --output-on-failure
 ```
 
 Or directly:
 ```bash
-env TMPDIR="$TEST_TMP_ROOT/unit" build/bin/test_bitcoin --run_test=<suite>/<case>
+build/bin/test_bitcoin --run_test=<suite>/<case>
 ```
 
 ## Important warnings
@@ -116,9 +116,10 @@ env TMPDIR="$TEST_TMP_ROOT/unit" build/bin/test_bitcoin --run_test=<suite>/<case
 ## Common issues
 
 - `Not enough file descriptors available. -1 available, 160 required`:
-  fd limit too low. On macOS, run `ulimit -n 10240`.
-- `AssertionError: not(0 == 199)`: stale test cache. Clear the active cache
-  path, usually `build/test/cache` or `$TEST_TMP_ROOT/cache-functional`.
+  fd limit too low. Rare now that the framework sets `maxconnections=94`; if it
+  still appears, raise the limit on macOS with `ulimit -n 10240`.
+- `AssertionError: not(0 == 199)`: stale test cache. Clear the cache dir,
+  `build/test/cache`.
 - `FileNotFoundError: .../test/config.ini`: running from the wrong directory.
   Use `build/test/functional/<test>.py`.
 - `SkipTest: no IPC support`: missing Python capnp dependency. Install
