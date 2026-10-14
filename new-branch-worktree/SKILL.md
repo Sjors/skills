@@ -1,10 +1,11 @@
 ---
 name: new-branch-worktree
 description: >-
-  Create a new Git branch using the user's dated branch names and a matching
-  sibling worktree when starting from main or master. Use when the user asks
-  to create a new branch or start an assignment on a new branch, in any
-  repository. Also use after opening a PR, or when a PR number becomes known,
+  Create or reuse a Git branch and a matching sibling worktree when starting
+  from main or master. Preserve existing GitHub branch names; use the user's
+  dated names for new work. Use when asked to create a branch, start work on
+  a new branch, or check out an existing PR, in any repository. Also use
+  after opening a PR, or when a PR number becomes known,
   to replace the worktree's x placeholder with that number. Understand the
   assignment before choosing the topic name.
 ---
@@ -29,8 +30,13 @@ takes precedence over these defaults.
 
 ## Naming and location
 
-- Branch: `YYYY/MM/<topic>`, using the current local year and two-digit month.
-  This is the user's preferred branch convention; do not add `codex/`.
+- Branch: when checking out an existing GitHub branch or PR, use its exact
+  head branch name. For example, PR #35671 uses `2026/03/collect-txs`; keep
+  that name even when checking it out in October. Read the PR metadata to
+  resolve the head branch name. Apply `YYYY/MM/<topic>` with the current
+  local year and two-digit month only when creating a branch for new work.
+  Do not add `codex/`. For an existing dated branch, use its final component
+  as the worktree topic, e.g. `35671-collect-txs`.
 - Worktree: `<primary-repo-parent>/<repo>-pr/<PR>-<topic>`.
   Derive the primary repository path from Git's worktree/common-directory
   information, rather than treating an existing worktree's basename as the
@@ -53,12 +59,17 @@ and worktree `<primary-repo-parent>/<repo>-pr/xxxxx-peer-timeout`.
 ## Create and continue
 
 Inspect the current branch, working-tree status, and existing branches and
-worktrees. Default to the current `main` or `master` commit as the base unless
-the assignment specifies a different base. Leave the original checkout and
+worktrees. For an existing GitHub branch or PR, fetch and check out its head
+using the existing branch name; reuse a matching local branch if present.
+Do not rebase it onto current master as part of checkout. For new work,
+default to the current `main` or `master` commit as the base unless the
+assignment specifies a different base. Leave the original checkout and
 its uncommitted changes intact; do not automatically move or stash them.
 
-Create the branch and worktree together with
-`git worktree add -b <branch> <worktree-path> <base>`. Do not force or overwrite
+Create a missing local branch and worktree together with
+`git worktree add -b <branch> <worktree-path> <base>`. If the matching local
+branch already exists, use `git worktree add <worktree-path> <branch>`.
+Do not force or overwrite
 an existing branch or directory. If a name is already occupied by unrelated
 work, choose a more specific topic; reuse an existing worktree only when the
 request is clearly to continue that work.
