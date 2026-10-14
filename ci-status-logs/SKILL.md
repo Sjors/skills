@@ -1,6 +1,6 @@
 ---
 name: github-ci-status-logs-mcp
-description: Retrieve GitHub CI status with MCP and Actions job logs with gh API when needed
+description: Investigate GitHub CI failures using MCP status and gh API logs, validate Bitcoin Core fixes on copilot, and fold repairs into their introducing commits. Also use for read-only CI status and log retrieval.
 ---
 
 # Skill Instructions
@@ -93,5 +93,39 @@ rg -n -i -C 5 "error|fail|assert|fatal|traceback|cmake error" /abs/path/to/repo/
 
     - **Important:** Do NOT guess what went wrong without fetching actual logs first. Always retrieve the real error message before proposing fixes.
     - For successful jobs, still inspect relevant indicators the user asked about, such as cache hit/miss lines, tool versions, warnings, and final summary sections.
+
+## Validate and fold CI fixes
+
+Apply this section when repairing a failure is in scope. Requests only for
+status, logs, or an explanation remain read-only.
+
+- **Use copilot for Bitcoin Core IWYU and sanitizer fixes.** Try the failing
+  check and the candidate fix there using the CI toolchain and configuration.
+  A native macOS build or a different IWYU version is not sufficient validation
+  of a Linux CI failure. Use [bitcoin-iwyu](../bitcoin-iwyu/SKILL.md) for IWYU and
+  [bitcoin-core-tests](../bitcoin-core-tests/SKILL.md) for builds and tests.
+- Read the checked-out CI scripts for compiler/IWYU versions, flags, mappings,
+  and runtime settings. For sanitizers, use the repository's existing
+  `ASAN_OPTIONS`, `LSAN_OPTIONS`, and `UBSAN_OPTIONS`, including CI's suppression
+  files, before running tests. Do not add suppressions to conceal the reported
+  failure. For IWYU, check the `fix_includes.py --nosafe_headers --dry_run` diff;
+  the IWYU process exit status alone does not establish success.
+- Reuse the PR's isolated verification directory on copilot, following the
+  repository's worktree instructions; run long jobs in the PR-numbered tmux
+  session with logs under `tmp/`. If local containerized lint fails because of
+  the host/container environment, try `./ci/lint.py` on copilot too. If copilot
+  is unavailable or cannot match CI, report the remaining validation limit.
+- **Always fold each fix into the PR commit that introduced the failure**, not
+  just for ancestor-commit failures. Trace the introducing change with Git
+  history, preserve unrelated work and a backup ref, then follow
+  [interactive-rebase](../interactive-rebase/SKILL.md) to amend or autosquash the
+  fix into that commit. Do not finish with an uncommitted patch or a separate
+  tip fixup unless the user explicitly requests that. A pre-existing upstream
+  failure is not a reason to rewrite unrelated upstream history.
+- Validate the amended commit in isolation and the final tip with the relevant
+  checks; use `~/utils/verify_bitcoin_commits.sh` for commit/range verification.
+  Inspect `git range-diff` to confirm only the intended fixes changed, and report
+  the rewritten commit IDs, test results, and worktree state. Do not push unless
+  explicitly requested.
 
 - **Related helper:** if the task also involves PR review-thread triage (outside CI logs), use `~/utils/extract_threads.py` with `get_review_comments` JSON output.
