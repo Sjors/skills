@@ -52,10 +52,42 @@ branch instead of assuming `origin/master`:
 git symbolic-ref --short refs/remotes/<remote>/HEAD
 ```
 
-Fetch the chosen target and record its immutable SHA:
+For stacked PRs, identify dependencies from the PR body and discussion even
+when the declared GitHub base is `main` or `master`. Fetch the latest dependency
+PR heads before restacking; use the latest immediate parent's head as the target
+unless the user explicitly pins another target or asks to wait. Preserve unpushed
+local work and validated fixes. Do not reuse older dependency commits or flatten
+the stack onto main just because some prerequisites have merged.
+
+Record the old dependency tip as `OLD_STACK_BASE` so only the child PR's commits
+are replayed. Retain the fetched dependency commits unchanged. Inspect their
+updated code, tests, CI, and relevant discussion before resolving overlaps, so
+superseded child patches do not undo newer dependency changes.
+
+When the target is the repository's main branch (`master` or `main`), first
+pull that branch in the main worktree. Locate it with `git worktree list
+--porcelain`, verify it has the intended target branch checked out, and inspect
+its working tree before updating:
+
+```bash
+git -C <main-worktree> branch --show-current
+git -C <main-worktree> status --short --branch
+git -C <main-worktree> pull --ff-only <target-remote> <target-branch>
+```
+
+Do not switch the main worktree to another branch, overwrite user work, or
+reset a diverged target to make this succeed. If it cannot safely fast-forward,
+report the obstruction before rebasing.
+
+For other targets, fetch the chosen target:
 
 ```bash
 git fetch <target-remote> <target-branch>
+```
+
+After the pull or fetch, record the target's immutable SHA:
+
+```bash
 git rev-parse <target-remote>/<target-branch>
 ```
 
@@ -133,8 +165,13 @@ Use the recorded target SHA so the base cannot move during the operation:
 GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase <TARGET_SHA>
 ```
 
-For a stacked rebase, preserve the user's `--onto` semantics exactly while
-still prefixing the command with both editor settings.
+For a stacked rebase, replay the child range onto the fetched dependency head:
+
+```bash
+GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase --onto <TARGET_SHA> <OLD_STACK_BASE>
+```
+
+Preserve any explicit user-provided `--onto` semantics.
 
 ## 3. Resolve each stop intentionally
 
@@ -190,6 +227,10 @@ git merge-base --is-ancestor <TARGET_SHA> <POST_REBASE_HEAD>
 git rev-list --count <TARGET_SHA>..<POST_REBASE_HEAD>
 git range-diff <OLD_BASE>..<PRE_REBASE_HEAD> <TARGET_SHA>..<POST_REBASE_HEAD>
 ```
+
+For stacked PRs, compare `OLD_STACK_BASE..PRE_REBASE_HEAD` against
+`TARGET_SHA..POST_REBASE_HEAD` to verify the child changes separately from the
+updated dependency history.
 
 The explicit ranges remain valid if the rebase drops a patch already present
 upstream. Investigate every non-equivalent range-diff change; do not explain it
