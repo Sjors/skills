@@ -157,6 +157,12 @@ If the stack contains merge commits whose structure matters, use
 upstream changes between `OLD_BASE` and `TARGET_SHA` in the touched areas before
 starting.
 
+For recreated merge messages, follow [merge](../merge/SKILL.md) and its PR
+reference policy, including when `--rebase-merges` reuses an old message.
+Retain fetched dependency commits unchanged as required above. The tracking
+fast-forward creates no new commit, and `git log --cherry-pick` and
+`git merge-base` are read-only; they need no message handling.
+
 ## 2. Rebase
 
 Use the recorded target SHA so the base cannot move during the operation:

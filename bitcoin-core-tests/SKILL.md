@@ -175,6 +175,11 @@ cmake --build ci_build_repro -j <jobs>
 ctest --output-on-failure --stop-on-failure --test-dir ci_build_repro -j <jobs>
 ```
 
+   Follow [merge](../merge/SKILL.md) in temporary-test mode. Preserve the
+   original destination PR context before detaching. Match the logged CI
+   semantics, record the pre-test tip, and account for `--no-commit` allowing a
+   fast-forward. Never commit or publish a reproduction merge.
+
 4. Run any targeted functional tests from the build tree after `ctest`, with
    fixed tmp/cache paths under the remote repo's `tmp/` directory:
 ```bash
@@ -184,9 +189,10 @@ env PWD="$REALPWD" TMPDIR="$REALPWD/tmp" "$REALPWD/ci_build_repro/test/functiona
   --cachedir="$REALPWD/tmp/cache-functional"
 ```
 
-5. Reset after each commit before advancing:
+5. Reset only the reproduction's changes after each commit before advancing.
+   Restore the recorded pre-test tip explicitly, including after a fast-forward:
 ```bash
-git reset --hard
+git reset --hard <pre-test-tip>
 ```
 
 If the remote host lacks an exact CI tool such as `mold`, document the omitted

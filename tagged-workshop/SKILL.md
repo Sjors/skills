@@ -50,7 +50,10 @@ If the user edited the final result first, inspect the diff and apply only the r
 
 4. Rewrite the `workshop` branch.
 
-For small changes, use interactive rebase from the parent of the earliest affected commit. For larger changes or many retags, rebuilding is often clearer:
+For small changes, use interactive rebase from the parent of the earliest affected commit. For larger changes or many retags, rebuilding is often clearer.
+Follow [cherry-pick](../cherry-pick/SKILL.md) for each replayed step, including
+its PR reference policy when the destination PR targets the user's fork.
+Apply any message changes before moving the tags:
 
 ```sh
 git switch workshop

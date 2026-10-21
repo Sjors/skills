@@ -90,6 +90,10 @@ rg -n -i -C 5 "error|fail|assert|fatal|traceback|cmake error" /abs/path/to/repo/
       `--exec`, merge the target branch into each ancestor with
       `git merge --no-commit`, run the per-commit test script, then reset. Match
       that shape when reproducing the failure.
+      Use [merge](../merge/SKILL.md) in temporary-test mode: record the starting
+      tip, restore it after testing even if `--no-commit` fast-forwards, and
+      never commit or publish the reproduction merge. Preserve the destination
+      PR context before detaching for ancestor tests.
 
     - **Important:** Do NOT guess what went wrong without fetching actual logs first. Always retrieve the real error message before proposing fixes.
     - For successful jobs, still inspect relevant indicators the user asked about, such as cache hit/miss lines, tool versions, warnings, and final summary sections.
